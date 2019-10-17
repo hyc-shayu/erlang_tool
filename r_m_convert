@@ -2,16 +2,18 @@
 %%% @author shayu
 %%% @copyright (C) 2019, <COMPANY>
 %%% @doc
+%%% 
+%%% 新增接收record字段映射的接口 嵌套的所有record都必须在该map中
 %%%
 %%% record map 相互非嵌套转换
-%%% 嵌套record map 相互转换解决方案
+%%% 嵌套record map 相互转换解决方案 使用map存储record名字和字段的映射
 %%%
 %%% @end
-%%% Created : 15. 10月 2019 16:08
+%%% Created : 17. 10月 2019 12:38
 %%%-------------------------------------------------------------------
 -module(r_m_convert).
 
--export([record_to_map/1, map_to_record/1, test/0]).
+-export([record_to_map/1, record_to_map/2, map_to_record/1, map_to_record/2, test/0]).
 
 -record(foo, {id, name, other}).
 
@@ -34,9 +36,29 @@
 %% 
 %%  record是在编译前进行预处理转换成tuple，运行时并没有record的概念
 %%  因此record_info()无法使用变量参数在运行时获取字段
-%%
-%%  可以采用map的方式来维护record名字到record字段的映射，在处理嵌套结构时动态获取
 %%  
+%%  可以采用map的方式来维护record名字到record字段的映射，在处理嵌套结构时动态获取
+%%  所有在转换时用到的record都需要在该map中添加好映射
+%%  
+%%  如果record元素类型是集合（list例外），里面的record不会被转换，map同理，例如
+%%  #foo{
+%%      list = [#foo1{}, #foo2{}],
+%%      tuple = {#foo1{}},
+%%      map = #{#foo1{} =>#foo2{}}
+%%  }.
+%%  考虑到list在record中的使用场景，list中的record全都相同时也可以会被转换
+%%  但严格要求list中必须都是同一种record，上面的list中存在不同record的情况将会抛出badarg
+%%  #foo{
+%%      list = [#foo1{}, #foo1{}, #foo1{}]
+%%  }.
+%%
+%%  tuple和map中放入了record，并不会被转换，也不会异常
+%%
+%%  一般如果tuple中的是同样的record，那么可以使用list来达到转换的目的
+%%  如果tuple中存在不同的record，建议将它们提取成record的单独字段，相同的record用list来保存成一个字段
+%%  
+%%  如果map中放入了record，建议将键提取成字段
+%%
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 %% 统一map存储record名字的key
@@ -44,11 +66,11 @@
 
 -define(RECORD_FIELDS_MAP,
     #{
-        foo => ?FOO_FIELDS
+        foo => ?RECORD_FIELDS(foo)
     }
 ).
 
--define(FOO_FIELDS, record_info(fields, foo)).
+-define(RECORD_FIELDS(RecordName), record_info(fields, RecordName)).
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %% 
@@ -56,33 +78,58 @@
 %%  
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 record_to_map(Record) ->
+    record_to_map(Record, ?RECORD_FIELDS_MAP).
+
+record_to_map(Record, RecordFieldsMap) ->
     case my_is_record(Record) of
         true ->
-            record_to_map_1(Record);
+            record_to_map_1(Record, RecordFieldsMap);
         false ->
             erlang:error(badarg, [Record])
     end.
 
-record_to_map_1(Record) ->
-    RecordName = element(1, Record),
-    %                          key列表                                                     value列表
-	maps:from_list(lists:zip([?RECORD_NAME | maps:get(RecordName, ?RECORD_FIELDS_MAP)], r2m_get_val_list(Record, size(Record), []))).
+record_to_map_1(Record, RecordFieldsMap) ->
+    RecordName = erlang:element(1, Record),
+	maps:from_list(lists:zip([?RECORD_NAME | maps:get(RecordName, RecordFieldsMap)], r2m_get_val_list(Record, RecordFieldsMap, erlang:size(Record), []))).
 
-r2m_get_val_list(_Record, 0, Ret) -> Ret;
-r2m_get_val_list(Record, Index, Ret) ->
+r2m_get_val_list(_Record, _RecordFieldsMap, 0, Ret) -> Ret;
+r2m_get_val_list(Record, RecordFieldsMap, Index, Ret) ->
     Term = erlang:element(Index, Record),
     Val =
 	case my_is_record(Term) of
         true ->
-			record_to_map_1(Term);
+			record_to_map_1(Term, RecordFieldsMap);
         false ->
-            Term
+            case my_is_record_list(Term) of 
+                false -> Term;
+                true -> record_list_to_map_list(Term, RecordFieldsMap)
+            end
     end,
-    r2m_get_val_list(Record, Index-1, [Val | Ret]).
-    
-my_is_record(Record) when is_tuple(Record) ->
-    RecordName = element(1, Record),
-    is_record(Record, RecordName, size(Record));
+    r2m_get_val_list(Record, RecordFieldsMap, Index-1, [Val | Ret]).
+
+record_list_to_map_list([Record|_] = L, RecordFieldsMap) ->
+    RecordName = erlang:element(1, Record),
+    Size = erlang:size(Record),
+    case catch [record_list_to_map_list_1(Record1, RecordName, Size, RecordFieldsMap) || Record1 <- L] of
+        {error, bad_record_list_element} -> erlang:error(badarg, [L]);
+        Result -> Result
+    end.
+
+record_list_to_map_list_1(Record, RecordName, RecordSize, RecordFieldsMap) when erlang:is_tuple(Record) ->
+    case {erlang:element(1, Record), erlang:size(Record)} of
+        {RecordName, RecordSize} ->
+            record_to_map(Record, RecordFieldsMap);
+        _ -> erlang:throw({error, bad_record_list_element})
+    end;
+record_list_to_map_list_1(_, _, _, _) -> erlang:throw({error, bad_record_list_element}).
+
+my_is_record_list([Record|_]) ->
+    my_is_record(Record);
+my_is_record_list(_) -> false.
+
+my_is_record(Record) when erlang:is_tuple(Record) ->
+    RecordName = erlang:element(1, Record),
+    is_record(Record, RecordName, erlang:size(Record));
 my_is_record(_) -> false.
 
 
@@ -92,27 +139,48 @@ my_is_record(_) -> false.
 %%  
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 map_to_record(Map) ->
+    map_to_record(Map, ?RECORD_FIELDS_MAP).
+
+map_to_record(Map, RecordFieldsMap) ->
     case my_is_map(Map) of
         true ->
-            map_to_record_1(Map);
+            map_to_record_1(Map, RecordFieldsMap);
         false ->
             erlang:error(badarg, [Map])
     end.
 
-map_to_record_1(Map = #{?RECORD_NAME := RecordName}) ->
-    list_to_tuple(m2r_get_val_list(Map, [?RECORD_NAME | maps:get(RecordName, ?RECORD_FIELDS_MAP)], [])).
+map_to_record_1(Map = #{?RECORD_NAME := RecordName}, RecordFieldsMap) ->
+    list_to_tuple(m2r_get_val_list(Map, RecordFieldsMap, [?RECORD_NAME | maps:get(RecordName, RecordFieldsMap)], [])).
 
-m2r_get_val_list(_Map, [], Ret) -> lists:reverse(Ret);
-m2r_get_val_list(Map, [Field|FT], Ret) ->
+m2r_get_val_list(_Map, _RecordFieldsMap, [], Ret) -> lists:reverse(Ret);
+m2r_get_val_list(Map, RecordFieldsMap, [Field|FT], Ret) ->
     Term = maps:get(Field, Map, undefined),
     Val = 
     case my_is_map(Term) of
         true ->
-            map_to_record_1(Term);
+            map_to_record_1(Term, RecordFieldsMap);
         false ->
-            Term
+            case my_is_map_list(Term) of
+                false -> Term;
+                true -> map_list_to_record_list(Term, RecordFieldsMap)
+            end
     end,
-    m2r_get_val_list(Map, FT, [Val|Ret]).
+    m2r_get_val_list(Map, RecordFieldsMap, FT, [Val|Ret]).
+
+map_list_to_record_list([Map|_] = ML, RecordFieldsMap) ->
+    RecordName = maps:get(?RECORD_NAME, Map),
+    case catch [map_list_to_record_list_1(Map1, RecordName, RecordFieldsMap) || Map1 <- ML] of
+        {error, bad_map_list_element} -> erlang:error(badarg, [ML]);
+        ResultList -> ResultList
+    end.
+
+map_list_to_record_list_1(Map = #{?RECORD_NAME := RecordName}, RecordName, RecordFieldsMap) ->
+    map_to_record(Map, RecordFieldsMap);
+map_list_to_record_list_1(_, _, _) -> erlang:throw({error, bad_map_list_element}).
+
+my_is_map_list([Map|_]) ->
+    my_is_map(Map);
+my_is_map_list(_) -> false.
 
 my_is_map(#{?RECORD_NAME := _RecordName}) ->
     true;
@@ -121,12 +189,12 @@ my_is_map(_) -> false.
 
 %% test
 test() ->
-    R = #foo{id = 1, name = haha, other = #foo{id = 2, name = hehe}},
+    R = #foo{id = 1, name = haha, other = #foo{id = 2, name = hehe, other=[#foo{}, #foo{}, #foo{}]}},
     M = record_to_map(R),
     test1(R, M),
     io:format("~w~nrecord_to_map~n~w~n", [R, M]),
     io:format("=====================================================================~n"),
-    R1 = map_to_record(M),
+    R = R1 = map_to_record(M),
     io:format("~w~nmap_to_record~n~w~n", [M, R1]).
 
 test1(R, M) ->
