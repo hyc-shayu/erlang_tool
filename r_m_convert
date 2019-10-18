@@ -9,7 +9,7 @@
 %%% 嵌套record map 相互转换解决方案 使用map存储record名字和字段的映射
 %%%
 %%% @end
-%%% Created : 17. 10月 2019 22:38
+%%% Created : 15. 10月 2019 22:38
 %%%-------------------------------------------------------------------
 -module(r_m_convert).
 
@@ -89,8 +89,9 @@
 %%  
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 record_flatten_by_map(Record, RecordFieldsMap) when erlang:is_tuple(Record)->
-    case my_is_record(Record, RecordFieldsMap) of
-        false -> Record;
+    RecordName = erlang:element(1, Record),
+    case erlang:is_record(Record, RecordName, erlang:size(Record)) of
+        false -> erlang:error(badarg, [Record, RecordFieldsMap]);
         true ->
             record_flatten_by_map_1(Record, RecordFieldsMap, erlang:size(Record))
     end;
@@ -182,8 +183,9 @@ my_is_record(_, _) -> false.
 %%  
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 record_recover_by_map(Record, #{}=RecordFieldsMap) when erlang:is_tuple(Record) ->
-    case my_is_record(Record, RecordFieldsMap) of
-        false -> Record;
+    RecordName = erlang:element(1, Record),
+    case erlang:is_record(Record, RecordName, erlang:size(Record)) of
+        false -> erlang:error(badarg, [record, RecordFieldsMap]);
         true ->
             record_recover_by_map_1(Record, RecordFieldsMap, erlang:size(Record))
     end;
@@ -255,3 +257,21 @@ my_is_map_list(_) -> false.
 my_is_map(#{?RECORD_NAME := _RecordName}) ->
     true;
 my_is_map(_) -> false.
+
+
+%% test
+test() ->
+    R = #foo{id = 1, name = haha, other = #foo{id = 2, name = hehe, other=[#foo{}, #foo{}, #foo{}]}},
+    M = record_to_map(R),
+    test1(R, M),
+    io:format("~w~nrecord_to_map~n~w~n", [R, M]),
+    io:format("=====================================================================~n"),
+    R = R1 = map_to_record(M),
+    io:format("~w~nmap_to_record~n~w~n", [M, R1]).
+
+test1(R, M) ->
+    M1 = ?RECORD_2_MAP(foo, R),
+    io:format("~w~n?RECORD_2_MAP~n~w~n", [R, M1]),
+    io:format("=====================================================================~n"),
+    R1 = ?MAP_2_RECORD(M, foo),
+    io:format("~w~n?MAP_2_RECORD~n~w~n~n~n", [M, R1]).
