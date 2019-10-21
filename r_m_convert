@@ -3,13 +3,13 @@
 %%% @copyright (C) 2019, <COMPANY>
 %%% @doc
 %%% 
-%%% 新增接收record字段映射的接口 嵌套的所有record都必须在该map中
+%%% 新增接收record字段映射map的接口 嵌套的所有需要转换的record都必须在该map中
 %%%
 %%% record map 相互非嵌套转换
 %%% 嵌套record map 相互转换解决方案 使用map存储record名字和字段的映射
 %%%
 %%% @end
-%%% Created : 15. 10月 2019 22:38
+%%% Created : 17. 10月 2019 22:38
 %%%-------------------------------------------------------------------
 -module(r_m_convert).
 
@@ -19,7 +19,10 @@
     record_flatten_by_map/2,
     map_to_record/1, 
     map_to_record/2, 
-    record_recover_by_map/2,
+    record_recover_by_map/2
+]).
+
+-export([
     test/0
 ]).
 
@@ -100,20 +103,8 @@ record_flatten_by_map(Record, RecordFieldsMap) -> erlang:error(badarg, [Record, 
 record_flatten_by_map_1(Record, _, 1) -> Record;
 record_flatten_by_map_1(Record, RecordFieldsMap, Index) ->
     Term = erlang:element(Index, Record),
-    NewRecord =
-    case my_is_record(Term, RecordFieldsMap) of
-        false -> 
-            case my_is_record_list(Term, RecordFieldsMap) of
-                false ->
-                    Record;
-                true ->
-                    Term1 = record_list_to_map_list(Term, RecordFieldsMap),
-                    erlang:setelement(Index, Record, Term1)
-            end;
-        true ->
-            Term1 = record_to_map_1(Term, RecordFieldsMap),
-            erlang:setelement(Index, Record, Term1)
-    end,
+    NewTerm = r2m_get_best_term(Term, RecordFieldsMap),
+    NewRecord = erlang:setelement(Index, Record, NewTerm),
     record_flatten_by_map_1(NewRecord, RecordFieldsMap, Index-1).
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
@@ -139,16 +130,7 @@ record_to_map_1(Record, RecordFieldsMap) ->
 r2m_get_val_list(_Record, _RecordFieldsMap, 0, Ret) -> Ret;
 r2m_get_val_list(Record, RecordFieldsMap, Index, Ret) ->
     Term = erlang:element(Index, Record),
-    Val =
-	case my_is_record(Term, RecordFieldsMap) of
-        true ->
-			record_to_map_1(Term, RecordFieldsMap);
-        false ->
-            case my_is_record_list(Term, RecordFieldsMap) of 
-                false -> Term;
-                true -> record_list_to_map_list(Term, RecordFieldsMap)
-            end
-    end,
+    Val = r2m_get_best_term(Term, RecordFieldsMap),
     r2m_get_val_list(Record, RecordFieldsMap, Index-1, [Val | Ret]).
 
 record_list_to_map_list([Record|_] = L, RecordFieldsMap) ->
@@ -176,6 +158,17 @@ my_is_record(Record, RecordFieldsMap) when erlang:is_tuple(Record) ->
     maps:is_key(RecordName, RecordFieldsMap) andalso erlang:is_record(Record, RecordName, erlang:size(Record));
 my_is_record(_, _) -> false.
 
+r2m_get_best_term(Term, RecordFieldsMap) ->
+    case my_is_record(Term, RecordFieldsMap) of
+        true ->
+			record_to_map_1(Term, RecordFieldsMap);
+        false ->
+            case my_is_record_list(Term, RecordFieldsMap) of 
+                false -> Term;
+                true -> record_list_to_map_list(Term, RecordFieldsMap)
+            end
+    end.
+
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %% 
@@ -194,19 +187,8 @@ record_recover_by_map(Record, RecordFieldsMap) ->erlang:error(badarg, [Record, R
 record_recover_by_map_1(Record, _, 1) -> Record;
 record_recover_by_map_1(Record, RecordFieldsMap, Index) ->
     Term = erlang:element(Index, Record),
-    NewRecord =
-    case my_is_map(Term) of
-        false -> 
-            case my_is_map_list(Term) of
-                false -> Record;
-                true ->
-                    Term1 = map_list_to_record_list(Term, RecordFieldsMap),
-                    erlang:setelement(Index, Record, Term1)
-            end;
-        true ->
-            Term1 = map_to_record_1(Term, RecordFieldsMap),
-            erlang:setelement(Index, Record, Term1)
-    end,
+    NewTerm = m2r_get_best_term(Term, RecordFieldsMap),
+    NewRecord = erlang:setelement(Index, Record, NewTerm),
     record_recover_by_map_1(NewRecord, RecordFieldsMap, Index-1).
         
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
@@ -228,16 +210,7 @@ map_to_record_1(#{?RECORD_NAME := RecordName} = Map, RecordFieldsMap) ->
 m2r_get_val_list(_Map, _RecordFieldsMap, [], Ret) -> lists:reverse(Ret);
 m2r_get_val_list(Map, RecordFieldsMap, [Field|FT], Ret) ->
     Term = maps:get(Field, Map, undefined),
-    Val = 
-    case my_is_map(Term) of
-        true ->
-            map_to_record_1(Term, RecordFieldsMap);
-        false ->
-            case my_is_map_list(Term) of
-                false -> Term;
-                true -> map_list_to_record_list(Term, RecordFieldsMap)
-            end
-    end,
+    Val = m2r_get_best_term(Term, RecordFieldsMap),
     m2r_get_val_list(Map, RecordFieldsMap, FT, [Val|Ret]).
 
 map_list_to_record_list([#{?RECORD_NAME := RecordName} |_] = ML, RecordFieldsMap) ->
@@ -257,6 +230,17 @@ my_is_map_list(_) -> false.
 my_is_map(#{?RECORD_NAME := _RecordName}) ->
     true;
 my_is_map(_) -> false.
+
+m2r_get_best_term(Term, RecordFieldsMap) ->
+    case my_is_map(Term) of
+        true ->
+            map_to_record_1(Term, RecordFieldsMap);
+        false ->
+            case my_is_map_list(Term) of
+                false -> Term;
+                true -> map_list_to_record_list(Term, RecordFieldsMap)
+            end
+    end.
 
 
 %% test
