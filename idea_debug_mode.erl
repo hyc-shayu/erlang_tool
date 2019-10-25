@@ -8,7 +8,7 @@
 %%% @end
 %%% Created : 25. 10月 2019 11:07
 %%%-------------------------------------------------------------------
--module(my_debug).
+-module(idea_debug_mode).
 -author("shayu").
 
 %% API
@@ -20,6 +20,7 @@
     begin
         __Fun =
             fun(__F, [{Key, Value}|T]) -> erlang:put(Key, Value), __F(__F, T);
+                (__F, [_|T]) -> __F(__F, T);
                 (__F, []) -> ok;
                 (__F, Args) -> erlang:error(badarg, [Args])
             end,
