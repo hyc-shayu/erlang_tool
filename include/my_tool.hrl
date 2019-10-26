@@ -20,3 +20,19 @@
         __Fun(__Fun, Args)
     end
 ).
+
+
+% my debug macro
+-define(MY_DEBUG(__Fun, __ArgLs),
+    begin
+    % 获取所有进程字典（调试进程复制进程字典使用）
+        __ProcessDictionary = erlang:get(),
+        % 创建一个调试进程 断点可以打在该进程方法(调试用的) 避免拦截主流程(断点打在bad_fun中)、断点混乱
+        __ProcessFun =
+            fun() ->
+                ?PUT_FROM_PROP_LIST(__ProcessDictionary),
+                erlang:apply(__Fun, __ArgLs)
+            end,
+        erlang:spawn(__ProcessFun)
+    end
+).
