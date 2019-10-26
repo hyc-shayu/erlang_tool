@@ -11,7 +11,7 @@
 %%%-------------------------------------------------------------------
 -module(r_pl_convert).
 -export([
-    r2pl_faltten/2,
+    r2pl_flatten/2,
     pl2r_recover/2,
     r2pl/2,
     pl2r/2
@@ -21,6 +21,9 @@
     test/0,
     test1/0
 ]).
+
+-define(FLAT, 1).
+-define(RECOVER, 2).
 
 -define(Test, lists:zip(lists:seq(1,10000), lists:seq(10001,20000))).
 
@@ -38,7 +41,7 @@
 -define(RECORD_NAME, '__record_name').
 
 test() ->
-    Record = r2pl_faltten(#foo3{}, ?RECORD_FIELDS_MAP),
+    Record = r2pl_flatten(#foo3{}, ?RECORD_FIELDS_MAP),
     io:format("~p~n~n", [Record]),
     Rec = pl2r_recover(Record, ?RECORD_FIELDS_MAP),
     io:format("~p~n~n", [Rec]).
@@ -55,21 +58,30 @@ r_pl_opt(Record, #{}=RecordFieldsMap, Type) when erlang:is_tuple(Record) ->
     Size = erlang:size(Record),
     case {erlang:is_record(Record, RecordName, Size), Type} of
         {false, _} -> erlang:error(badarg, [Record, RecordFieldsMap]);
-        {true, 1} -> r2pl_faltten_1(Record, RecordFieldsMap, Size);
-        {true, 2} -> pl2r_recover_1(Record, RecordFieldsMap, Size)
+        {true, ?FLAT} -> r2pl_flatten_1(Record, RecordFieldsMap, Size);
+        {true, ?RECOVER} -> pl2r_recover_1(Record, RecordFieldsMap, Size)
     end;
 r_pl_opt(Record, RecordFieldsMap, _) -> erlang:error(badarg, [Record, RecordFieldsMap]).
 
-r2pl_faltten(Record, RecordFieldsMap) ->
-    r_pl_opt(Record, RecordFieldsMap, 1).
+r2pl_flatten(Record, RecordFieldsMap) ->
+    r_pl_opt(Record, RecordFieldsMap, ?FLAT).
     
 
-r2pl_faltten_1(NewRecord, _RecordFieldsMap, 1) -> NewRecord;
-r2pl_faltten_1(Record, RecordFieldsMap, Index) ->
+r2pl_flatten_1(NewRecord, _RecordFieldsMap, 1) -> NewRecord;
+r2pl_flatten_1(Record, RecordFieldsMap, Index) ->
     Term = erlang:element(Index, Record),
     NewTerm = r2pl_term_deal(Term, RecordFieldsMap),
     NewRecord = erlang:setelement(Index, Record, NewTerm),
-    r2pl_faltten_1(NewRecord, RecordFieldsMap, Index-1).
+    r2pl_flatten_1(NewRecord, RecordFieldsMap, Index-1).
+
+%% I think it was little slow.
+%%r2pl_flatten_1(Record, _RecordFieldsMap, Index) -> r2pl_flatten_1_1(Record, _RecordFieldsMap, Index, []).
+%%
+%%r2pl_flatten_1_1(_Record, _RecordFieldsMap, 0, Result) -> list_to_tuple(lists:reverse(Result));
+%%r2pl_flatten_1_1(Record, RecordFieldsMap, Index, Result) ->
+%%    Term = erlang:element(Index, Record),
+%%    NewTerm = r2pl_term_deal(Term, RecordFieldsMap),
+%%    r2pl_flatten_1_1(Record, RecordFieldsMap, Index-1, [NewTerm|Result]).
 
 r2pl(Record, #{} = RecordFieldsMap) ->
     case my_is_record(Record, RecordFieldsMap) of
@@ -124,7 +136,7 @@ my_is_record_list([Record|_], RecordFieldsMap) ->
 my_is_record_list(_, _) -> false.
 
 pl2r_recover(Record, RecordFieldsMap) ->
-    r_pl_opt(Record, RecordFieldsMap, 2).
+    r_pl_opt(Record, RecordFieldsMap, ?RECOVER).
 
 
 pl2r_recover_1(NewRecord, _, 1) -> NewRecord;
