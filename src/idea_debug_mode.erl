@@ -29,6 +29,20 @@
     end
 ).
 
+-define(MY_DEBUG(_Fun, _ArgLs),
+    begin
+        % 获取所有进程字典（调试进程复制进程字典使用）
+        _ProcessDictionary = erlang:get(),
+        % 创建一个调试进程 断点可以打在该进程方法(调试用的) 避免拦截主流程(断点打在bad_fun中)、断点混乱
+        _ProcessFun =
+            fun() ->
+                ?PUT_FROM_PROP_LIST(_ProcessDictionary),
+                erlang:apply(_Fun, _ArgLs)
+            end,
+        erlang:spawn(_ProcessFun)
+    end
+).
+
 example(Args) ->
     put(a, 1),
     put(b, 2),
@@ -37,19 +51,16 @@ example(Args) ->
     Condition = debug,
     case Condition of
         debug ->
-    		Fun = fun bad_fun/1,
-            % 获取所有进程字典（调试进程复制进程字典使用）
-            ProcessDictionary = erlang:get(),
-            % 创建一个调试进程 断点可以打在该进程方法(调试用的) 避免拦截主流程(断点打在bad_fun中)、断点混乱
-            Process = fun() -> example_debug(ProcessDictionary, Fun, [Args]) end,
-            erlang:spawn(Process);
+            BadFun = fun bad_fun/1,
+            %           debug进程方法        debug进程方法参数
+            %                              目标方法   参数
+            ?MY_DEBUG(fun example_debug/2, [BadFun, [Args]]);
         _ -> continue
     end,
     do_your_work.
 
-example_debug(ProcessDictionary, Fun, ArgsLs) ->
+example_debug(Fun, ArgsLs) ->
     % 在这个方法打断点 对调试进程进行调试
-    ?PUT_FROM_PROP_LIST(ProcessDictionary),
     erlang:apply(Fun, ArgsLs).
 
 bad_fun(Divisor) ->
