@@ -16,6 +16,7 @@
     example/1
 ]).
 
+% 从proplist 设置进程字典（复制进程字典）
 -define(PUT_FROM_PROP_LIST(Args),
     begin
         __Fun =
@@ -33,10 +34,10 @@ example(Args) ->
     put(b, 2),
     put(c, 3),
     put(d, 4),
-    Fun = fun bad_fun/1,
     Condition = debug,
     case Condition of
         debug ->
+    		Fun = fun bad_fun/1,
             % 获取所有进程字典（调试进程复制进程字典使用）
             ProcessDictionary = erlang:get(),
             % 创建一个调试进程 断点可以打在该进程方法(调试用的) 避免拦截主流程(断点打在bad_fun中)、断点混乱
