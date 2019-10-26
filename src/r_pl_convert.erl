@@ -14,7 +14,7 @@
     r2pl_faltten/2,
     pl2r_recover/2,
     r2pl/2,
-    pl2r/3
+    pl2r/2
 ]).
 
 -export([
