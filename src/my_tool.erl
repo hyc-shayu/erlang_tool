@@ -1,5 +1,5 @@
 %%%-------------------------------------------------------------------
-%%% @author huangyoucai
+%%% @author shayu
 %%% @copyright (C) 2019, <COMPANY>
 %%% @doc
 %%%
@@ -7,7 +7,7 @@
 %%% Created : 25. 10月 2019 16:59
 %%%-------------------------------------------------------------------
 -module(my_tool).
--author("huangyoucai").
+-author("shayu").
 
 %% API
 -export([
