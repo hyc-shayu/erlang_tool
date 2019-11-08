@@ -36,3 +36,20 @@
         erlang:spawn(__ProcessFun)
     end
 ).
+
+-define(PRINT(Word), io:format("~p~n", [Word])).
+
+% 创建一个调用N次 TestFun() 的函数
+-define(RECURSIVE(Num, TestFun),
+    begin
+        F =
+            fun(Fun, Num) when Num > 0 -> TestFun(), Fun(Fun, Num-1);
+                (_, 0) -> ok
+            end,
+        F(F, Num)
+    end
+).
+
+% 创建一个接收调用次数的函数 @fixme erlc: variable '_Num' shadowed in 'fun'
+-define(RECURSIVE_FUN(TestFun), fun(_Num) -> ?RECURSIVE(_Num, TestFun) end).
+
