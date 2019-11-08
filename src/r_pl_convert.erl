@@ -5,7 +5,8 @@
 %%% 
 %%% record proplist 转换方案，采用map存储record字段映射
 %%% 参考r_m_convert
-%%%
+%%% record2proplist 比 r2pl 快一丢丢
+%%% proplist2record 比 pl2r 快许多
 %%% @end
 %%% Created : 20. 10月 2019 20:38
 %%%-------------------------------------------------------------------
@@ -18,71 +19,103 @@
 ]).
 
 -export([
-    test/0,
-    test1/0
+    record2proplist/2,
+    proplist2record/2,
+    record2proplist_flatten/2,
+    proplist2record_recover/2
 ]).
-
--define(FLAT, 1).
--define(RECOVER, 2).
-
--define(Test, lists:zip(lists:seq(1,10000), lists:seq(10001,20000))).
-
--record(foo, {id=0, name=noname}).
-
--record(foo1, {id=1, name=ha, age=22, weight=100, username=god, password=666, sd=gfd, hsjdf=erjg, sdhfjs=[dfehs,dfse,weh], score=98, max=9999999, power=9999, foo=#foo{}}).
-
--record(foo2, {foo1=#foo1{id=5}, foo2=[#foo1{id=6}, #foo1{id=3}, #foo1{id=4}], foo3=#foo1{}, foo4=#foo1{id=7}, foo5=#foo1{id=8}, foo6=#foo1{}, foo7=#foo1{}, foo8=#foo1{}, foo9=#foo1{}, foo10=#foo1{}}).
-
--record(foo3, {foo1=[#foo1{id=1}, #foo1{id=2}], foo=#foo{}}).
-
--define(foo1, record_info(fields, foo1)).
--define(RECORD_FIELDS_MAP, #{foo=> record_info(fields, foo), foo1=> record_info(fields, foo1), foo2=> record_info(fields, foo2)}).
 
 -define(RECORD_NAME, '__record_name').
 
-test() ->
-    Record = r2pl_flatten(#foo3{}, ?RECORD_FIELDS_MAP),
-    io:format("~p~n~n", [Record]),
-    Rec = pl2r_recover(Record, ?RECORD_FIELDS_MAP),
-    io:format("~p~n~n", [Rec]).
+%%======================================================================================
+%% 检查松散，传入不可转换的参数不会抛出异常（flatten传入非元组除外），返回该参数，对于第一个元素是可转换的list，
+%% 不强求所有元素都为同一个record结构，除了头元素，其他元素可以任意类型
+%%======================================================================================
+record2proplist_flatten(Record, #{} = RecordFieldsMap) when erlang:is_tuple(Record) ->
+    RL = erlang:tuple_to_list(Record),
+    erlang:list_to_tuple([record2proplist(Term, RecordFieldsMap) || Term <- RL]);
+record2proplist_flatten(Record, #{}) ->
+    erlang:error(badarg, [Record]).
 
-test1() ->
-    PL = r2pl_0(#foo1{}, ?RECORD_FIELDS_MAP),
-    io:format("~p~n~n", [PL]),
-    #foo1{} = Record = pl2r(PL, ?RECORD_FIELDS_MAP),
-    io:format("~p~n~n", [Record]).
+record2proplist(Term, RecordFieldsMap) ->
+    case my_is_record(Term, RecordFieldsMap) of
+        true ->
+            record2proplist_0(Term, RecordFieldsMap);
+        false ->
+            case my_is_record_list(Term, RecordFieldsMap) of
+                false -> Term;
+                true ->
+                    record_list_to_proplist(Term, RecordFieldsMap)
+            end
+    end.
 
-
-r_pl_opt(Record, #{}=RecordFieldsMap, Type) when erlang:is_tuple(Record) ->
+record2proplist_0(Record, RecordFieldsMap) ->
     RecordName = erlang:element(1, Record),
-    Size = erlang:size(Record),
-    case {erlang:is_record(Record, RecordName, Size), Type} of
-        {false, _} -> erlang:error(badarg, [Record, RecordFieldsMap]);
-        {true, ?FLAT} -> r2pl_flatten_1(Record, RecordFieldsMap, Size);
-        {true, ?RECOVER} -> pl2r_recover_1(Record, RecordFieldsMap, Size)
+    record2proplist_1(Record, [?RECORD_NAME | maps:get(RecordName, RecordFieldsMap)], 1, RecordFieldsMap).
+
+record2proplist_1(Record, [Field|TFL], Index, RecordFieldsMap) ->
+    Value = erlang:element(Index, Record),
+    Value1 = record2proplist(Value, RecordFieldsMap),
+    [{Field, Value1} | record2proplist_1(Record, TFL, Index+1, RecordFieldsMap)];
+record2proplist_1(_Record, [], _Index, _RecordFieldsMap) -> [].
+
+record_list_to_proplist(RL, RecordFieldsMap) ->
+    lists:map(fun(_Term) -> record2proplist(_Term, RecordFieldsMap) end, RL).
+
+
+
+proplist2record_recover(Record, #{} = RecordFieldsMap) when erlang:is_tuple(Record) ->
+    RL = erlang:tuple_to_list(Record),
+    erlang:list_to_tuple([proplist2record(Term, RecordFieldsMap) || Term <- RL]);
+proplist2record_recover(Record, #{}) ->
+    erlang:error(badarg, [Record]).
+
+proplist2record([{?RECORD_NAME, RecordName}|TPL], #{} = RecordFieldsMap) ->
+%%    @doc 速度非常慢, 速度是get_values_by_fields的1/3
+%%    F =
+%%        fun(Field, PL) ->
+%%            case lists:keytake(Field, 1, PL) of
+%%                {value, {Field, Value}, RestPL} -> {proplist2record(Value, RecordFieldsMap), RestPL};
+%%                false -> {undefined, PL}
+%%            end
+%%        end,
+%%    {VL, _} = lists:mapfoldl(F, TPL, maps:get(RecordName, RecordFieldsMap)),
+    erlang:list_to_tuple([RecordName | get_values_by_fields(TPL, maps:get(RecordName, RecordFieldsMap), RecordFieldsMap)]);
+proplist2record([[{?RECORD_NAME, _}|_]|_]=PLL, #{} = RecordFieldsMap) ->
+    [proplist2record(PL, RecordFieldsMap) || PL <- PLL];
+proplist2record(Term, #{}) -> Term.
+
+get_values_by_fields([{Field, Value}|TPL], [Field | TFL], RecordFieldsMap) ->
+    [proplist2record(Value, RecordFieldsMap) | get_values_by_fields(TPL, TFL, RecordFieldsMap)];
+get_values_by_fields([{_,_}=H|_]=PL, [Field|TFL], RecordFieldsMap) ->
+    case get_values_by_fields_1(PL, Field, [H]) of
+        {RestPL, Value} ->
+            [proplist2record(Value, RecordFieldsMap)|get_values_by_fields(RestPL, TFL, RecordFieldsMap)];
+        not_found ->
+            [undefined|get_values_by_fields(PL, TFL, RecordFieldsMap)]
     end;
-r_pl_opt(Record, RecordFieldsMap, _) -> erlang:error(badarg, [Record, RecordFieldsMap]).
+get_values_by_fields([], [_|TFL], RecordFieldsMap) ->
+    [undefined|get_values_by_fields([], TFL, RecordFieldsMap)];
+get_values_by_fields(_, [], _) -> [].
 
-r2pl_flatten(Record, RecordFieldsMap) ->
-    r_pl_opt(Record, RecordFieldsMap, ?FLAT).
+get_values_by_fields_1([{Field, Value}|TPL], Field, HRest) ->
+    {lists:reverse(HRest, TPL), Value};
+get_values_by_fields_1([{_,_}=H|TPL], Field, HRest) ->
+    get_values_by_fields_1(TPL, Field, [H|HRest]);
+get_values_by_fields_1([], _Field, _HRest) ->
+    not_found.
+
+%%======================================================================================
+%% 进行严格检查，传入的record|proplist无法转换将会抛出异常，如果属性中有list中第一个是可以的转换record|proplist
+%% 尾列表所有元素必需与第一个record为同一个record结构，proplist的record_name必须一致，否则抛出错误
+%%======================================================================================
+
+r2pl_flatten(Record, #{} = RecordFieldsMap) when erlang:is_tuple(Record) ->
+    RL = erlang:tuple_to_list(Record),
+    erlang:list_to_tuple([r2pl_term_deal(Term, RecordFieldsMap) || Term <- RL]);
+r2pl_flatten(Record, #{}) ->
+    erlang:error(badarg, [Record]).
     
-
-r2pl_flatten_1(NewRecord, _RecordFieldsMap, 1) -> NewRecord;
-r2pl_flatten_1(Record, RecordFieldsMap, Index) ->
-    Term = erlang:element(Index, Record),
-    NewTerm = r2pl_term_deal(Term, RecordFieldsMap),
-    NewRecord = erlang:setelement(Index, Record, NewTerm),
-    r2pl_flatten_1(NewRecord, RecordFieldsMap, Index-1).
-
-%% I think it was little slow.
-%%r2pl_flatten_1(Record, _RecordFieldsMap, Index) -> r2pl_flatten_1_1(Record, _RecordFieldsMap, Index, []).
-%%
-%%r2pl_flatten_1_1(_Record, _RecordFieldsMap, 0, Result) -> list_to_tuple(lists:reverse(Result));
-%%r2pl_flatten_1_1(Record, RecordFieldsMap, Index, Result) ->
-%%    Term = erlang:element(Index, Record),
-%%    NewTerm = r2pl_term_deal(Term, RecordFieldsMap),
-%%    r2pl_flatten_1_1(Record, RecordFieldsMap, Index-1, [NewTerm|Result]).
-
 r2pl(Record, #{} = RecordFieldsMap) ->
     case my_is_record(Record, RecordFieldsMap) of
         false -> erlang:error(badarg, [Record, RecordFieldsMap]);
@@ -128,23 +161,20 @@ r2pl_term_deal(Term, RecordFieldsMap) ->
                     
 my_is_record(Record, RecordFieldsMap) when erlang:is_tuple(Record) ->
     RecordName = erlang:element(1, Record),
-    maps:is_key(RecordName, RecordFieldsMap) andalso erlang:is_record(Record, RecordName, erlang:size(Record));
+    erlang:is_record(Record, RecordName, erlang:size(Record)) andalso maps:is_key(RecordName, RecordFieldsMap);
 my_is_record(_, _) -> false.
 
 my_is_record_list([Record|_], RecordFieldsMap) ->
     my_is_record(Record, RecordFieldsMap);
 my_is_record_list(_, _) -> false.
 
-pl2r_recover(Record, RecordFieldsMap) ->
-    r_pl_opt(Record, RecordFieldsMap, ?RECOVER).
 
 
-pl2r_recover_1(NewRecord, _, 1) -> NewRecord;
-pl2r_recover_1(Record, RecordFieldsMap, Index) ->
-    Term = erlang:element(Index, Record),
-    NewTerm = pl2r_get_best_val(Term, RecordFieldsMap),
-    NewRecord = erlang:setelement(Index, Record, NewTerm),
-    pl2r_recover_1(NewRecord, RecordFieldsMap, Index-1).
+pl2r_recover(Record, #{} = RecordFieldsMap) when erlang:is_tuple(Record) ->
+    RL = erlang:tuple_to_list(Record),
+    erlang:list_to_tuple([pl2r_get_best_val(Term, RecordFieldsMap) || Term <- RL]);
+pl2r_recover(Record, #{}) ->
+    erlang:error(badarg, [Record]).
 
 pl2r([{?RECORD_NAME, RecordName}|_] = PL, #{} = RecordFieldsMap) ->
     pl2r(PL, [?RECORD_NAME | maps:get(RecordName, RecordFieldsMap)], RecordFieldsMap);
