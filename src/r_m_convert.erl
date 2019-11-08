@@ -14,19 +14,11 @@
 -module(r_m_convert).
 
 -export([
-    record_to_map/1, 
-    record_to_map/2, 
-    record_flatten_by_map/2,
-    map_to_record/1, 
-    map_to_record/2, 
-    record_recover_by_map/2
+    record_to_map/2,
+    record_flatten_to_map/2,
+    map_to_record/2,
+    record_recover_from_map/2
 ]).
-
--export([
-    test/0
-]).
-
--record(foo, {id, name, other}).
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %% 
@@ -77,44 +69,35 @@
 %% 统一map存储record名字的key
 -define(RECORD_NAME, '__record_name').
 
--define(RECORD_FIELDS_MAP,
-    #{
-        foo => ?RECORD_FIELDS(foo)
-    }
-).
-
--define(RECORD_FIELDS(RecordName), record_info(fields, RecordName)).
-
-
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %% 
 %%  接收record 内部嵌套record转换成嵌套map
 %%  
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-record_flatten_by_map(Record, RecordFieldsMap) when erlang:is_tuple(Record)->
+record_flatten_to_map(Record, #{} =RecordFieldsMap) when erlang:is_tuple(Record)->
     RecordName = erlang:element(1, Record),
     case erlang:is_record(Record, RecordName, erlang:size(Record)) of
         false -> erlang:error(badarg, [Record, RecordFieldsMap]);
         true ->
-            record_flatten_by_map_1(Record, RecordFieldsMap, erlang:size(Record))
+            record_flatten_to_map_1(Record, RecordFieldsMap)
     end;
-record_flatten_by_map(Record, RecordFieldsMap) -> erlang:error(badarg, [Record, RecordFieldsMap]).
+record_flatten_to_map(Record, #{}) -> erlang:error(badarg, [Record]).
 
-record_flatten_by_map_1(Record, _, 1) -> Record;
-record_flatten_by_map_1(Record, RecordFieldsMap, Index) ->
-    Term = erlang:element(Index, Record),
-    NewTerm = r2m_get_best_term(Term, RecordFieldsMap),
-    NewRecord = erlang:setelement(Index, Record, NewTerm),
-    record_flatten_by_map_1(NewRecord, RecordFieldsMap, Index-1).
+record_flatten_to_map_1(Record, RecordFieldsMap) ->
+    RL = erlang:tuple_to_list(Record),
+    erlang:list_to_tuple([r2m_get_best_term(Term, RecordFieldsMap) || Term <- RL]).
+%%record_flatten_to_map_1(Record, _, 1) -> Record;
+%%record_flatten_to_map_1(Record, RecordFieldsMap, Index) ->
+%%    Term = erlang:element(Index, Record),
+%%    NewTerm = r2m_get_best_term(Term, RecordFieldsMap),
+%%    NewRecord = erlang:setelement(Index, Record, NewTerm),
+%%    record_flatten_to_map_1(NewRecord, RecordFieldsMap, Index-1).
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %% 
 %%  嵌套record转换成嵌套map
 %%  
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-record_to_map(Record) ->
-    record_to_map(Record, ?RECORD_FIELDS_MAP).
-
 record_to_map(Record, RecordFieldsMap) ->
     case my_is_record(Record, RecordFieldsMap) of
         true ->
@@ -125,7 +108,11 @@ record_to_map(Record, RecordFieldsMap) ->
 
 record_to_map_1(Record, RecordFieldsMap) ->
     RecordName = erlang:element(1, Record),
-	maps:from_list(lists:zip([?RECORD_NAME | maps:get(RecordName, RecordFieldsMap)], r2m_get_val_list(Record, RecordFieldsMap, erlang:size(Record), []))).
+	r2m_map([?RECORD_NAME | maps:get(RecordName, RecordFieldsMap)], r2m_get_val_list(Record, RecordFieldsMap, erlang:size(Record), []), #{}).
+
+r2m_map([Field|TFL], [Value|TVL], Map) ->
+    r2m_map(TFL, TVL, Map#{Field => Value});
+r2m_map([], [], Map) -> Map.
 
 r2m_get_val_list(_Record, _RecordFieldsMap, 0, Ret) -> Ret;
 r2m_get_val_list(Record, RecordFieldsMap, Index, Ret) ->
@@ -175,31 +162,24 @@ r2m_get_best_term(Term, RecordFieldsMap) ->
 %%  接收record 内部嵌套map转换成嵌套record
 %%  
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-record_recover_by_map(Record, #{}=RecordFieldsMap) when erlang:is_tuple(Record) ->
+record_recover_from_map(Record, #{}=RecordFieldsMap) when erlang:is_tuple(Record) ->
     RecordName = erlang:element(1, Record),
     case erlang:is_record(Record, RecordName, erlang:size(Record)) of
         false -> erlang:error(badarg, [record, RecordFieldsMap]);
         true ->
-            record_recover_by_map_1(Record, RecordFieldsMap, erlang:size(Record))
+            record_recover_from_map_1(Record, RecordFieldsMap)
     end;
-record_recover_by_map(Record, RecordFieldsMap) ->erlang:error(badarg, [Record, RecordFieldsMap]).
+record_recover_from_map(Record, #{}) ->erlang:error(badarg, [Record]).
 
-record_recover_by_map_1(Record, _, 1) -> Record;
-record_recover_by_map_1(Record, RecordFieldsMap, Index) ->
-    Term = erlang:element(Index, Record),
-    NewTerm = m2r_get_best_term(Term, RecordFieldsMap),
-    NewRecord = erlang:setelement(Index, Record, NewTerm),
-    record_recover_by_map_1(NewRecord, RecordFieldsMap, Index-1).
-        
+record_recover_from_map_1(Record, RecordFieldsMap) ->
+    RL = erlang:tuple_to_list(Record),
+    erlang:list_to_tuple([m2r_get_best_term(Term, RecordFieldsMap) || Term <- RL]).
+
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %% 
 %%  嵌套map转换成嵌套record
 %%  
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-map_to_record(#{?RECORD_NAME := _} = Map) ->
-    map_to_record(Map, ?RECORD_FIELDS_MAP);
-map_to_record(Map) -> erlang:error(badarg, [Map]).
-
 map_to_record(#{?RECORD_NAME := _} = Map, RecordFieldsMap) ->
     map_to_record_1(Map, RecordFieldsMap);
 map_to_record(Map, RecordFieldsMap) -> erlang:error(badarg, [Map, RecordFieldsMap]).
@@ -242,20 +222,3 @@ m2r_get_best_term(Term, RecordFieldsMap) ->
             end
     end.
 
-
-%% test
-test() ->
-    R = #foo{id = 1, name = haha, other = #foo{id = 2, name = hehe, other=[#foo{}, #foo{}, #foo{}]}},
-    M = record_to_map(R),
-    test1(R, M),
-    io:format("~w~nrecord_to_map~n~w~n", [R, M]),
-    io:format("=====================================================================~n"),
-    R = R1 = map_to_record(M),
-    io:format("~w~nmap_to_record~n~w~n", [M, R1]).
-
-test1(R, M) ->
-    M1 = ?RECORD_2_MAP(foo, R),
-    io:format("~w~n?RECORD_2_MAP~n~w~n", [R, M1]),
-    io:format("=====================================================================~n"),
-    R1 = ?MAP_2_RECORD(M, foo),
-    io:format("~w~n?MAP_2_RECORD~n~w~n~n~n", [M, R1]).
