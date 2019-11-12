@@ -158,8 +158,8 @@ r2pl_term_deal(Term, RecordFieldsMap) ->
         true ->
             r2pl_0(Term, RecordFieldsMap)
     end.
-                    
-my_is_record(Record, RecordFieldsMap) when erlang:is_tuple(Record) ->
+
+my_is_record(Record, RecordFieldsMap) when erlang:is_tuple(Record), erlang:is_atom(element(1, Record)) ->
     RecordName = erlang:element(1, Record),
     erlang:is_record(Record, RecordName, erlang:size(Record)) andalso maps:is_key(RecordName, RecordFieldsMap);
 my_is_record(_, _) -> false.
