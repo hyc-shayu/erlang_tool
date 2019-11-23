@@ -20,47 +20,57 @@
 
 -export([
     record2proplist/2,
+    record2proplist/3,
     proplist2record/2,
     record2proplist_flatten/2,
+    record2proplist_flatten/3,
     proplist2record_recover/2
 ]).
 
 -define(RECORD_NAME, '__record_name').
+-define(DEFAULT_DEEP, 10).
 
 %%======================================================================================
 %% 检查松散，传入不可转换的参数不会抛出异常（flatten传入非元组除外），返回该参数，对于第一个元素是可转换的list，
 %% 不强求所有元素都为同一个record结构，除了头元素，其他元素可以任意类型
 %%======================================================================================
-record2proplist_flatten(Record, #{} = RecordFieldsMap) when erlang:is_tuple(Record) ->
+record2proplist_flatten(Record, RecordFieldsMap) ->
+    record2proplist_flatten(Record, RecordFieldsMap, ?DEFAULT_DEEP).
+
+record2proplist_flatten(Record, #{} = RecordFieldsMap, Deep) when erlang:is_tuple(Record), erlang:is_integer(Deep) ->
     RL = erlang:tuple_to_list(Record),
-    erlang:list_to_tuple([record2proplist(Term, RecordFieldsMap) || Term <- RL]);
-record2proplist_flatten(Record, #{}) ->
-    erlang:error(badarg, [Record]).
+    erlang:list_to_tuple([record2proplist(Term, RecordFieldsMap, Deep) || Term <- RL]);
+record2proplist_flatten(Record, #{} = RecordFieldsMap, Deep) ->
+    erlang:error(badarg, [Record, RecordFieldsMap, Deep]).
 
 record2proplist(Term, RecordFieldsMap) ->
+    record2proplist(Term, RecordFieldsMap, ?DEFAULT_DEEP).
+
+record2proplist(Term, RecordFieldsMap, Deep) when Deep > 0 ->
     case my_is_record(Term, RecordFieldsMap) of
         true ->
-            record2proplist_0(Term, RecordFieldsMap);
+            record2proplist_0(Term, RecordFieldsMap, Deep - 1);
         false ->
             case my_is_record_list(Term, RecordFieldsMap) of
                 false -> Term;
                 true ->
-                    record_list_to_proplist(Term, RecordFieldsMap)
+                    record_list_to_proplist(Term, RecordFieldsMap, Deep)
             end
-    end.
+    end;
+record2proplist(Term, _, 0) -> Term.
 
-record2proplist_0(Record, RecordFieldsMap) ->
+record2proplist_0(Record, RecordFieldsMap, Deep) ->
     RecordName = erlang:element(1, Record),
-    record2proplist_1(Record, [?RECORD_NAME | maps:get(RecordName, RecordFieldsMap)], 1, RecordFieldsMap).
+    record2proplist_1(Record, [?RECORD_NAME | maps:get(RecordName, RecordFieldsMap)], 1, RecordFieldsMap, Deep).
 
-record2proplist_1(Record, [Field|TFL], Index, RecordFieldsMap) ->
+record2proplist_1(Record, [Field|TFL], Index, RecordFieldsMap, Deep) ->
     Value = erlang:element(Index, Record),
-    Value1 = record2proplist(Value, RecordFieldsMap),
-    [{Field, Value1} | record2proplist_1(Record, TFL, Index+1, RecordFieldsMap)];
-record2proplist_1(_Record, [], _Index, _RecordFieldsMap) -> [].
+    Value1 = record2proplist(Value, RecordFieldsMap, Deep),
+    [{Field, Value1} | record2proplist_1(Record, TFL, Index+1, RecordFieldsMap, Deep)];
+record2proplist_1(_Record, [], _Index, _RecordFieldsMap, _Deep) -> [].
 
-record_list_to_proplist(RL, RecordFieldsMap) ->
-    lists:map(fun(_Term) -> record2proplist(_Term, RecordFieldsMap) end, RL).
+record_list_to_proplist(RL, RecordFieldsMap, Deep) ->
+    lists:map(fun(_Term) -> record2proplist(_Term, RecordFieldsMap, Deep) end, RL).
 
 
 
