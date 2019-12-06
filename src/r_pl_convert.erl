@@ -33,6 +33,9 @@
 %%======================================================================================
 %% 检查松散，传入不可转换的参数不会抛出异常（flatten传入非元组除外），返回该参数，对于第一个元素是可转换的list，
 %% 不强求所有元素都为同一个record结构，除了头元素，其他元素可以任意类型
+%% ---更新---
+%% 增加默认值映射选择，使用record名字的字符串映射到默认值列表，可选，如果没有，则新增字段默认值为undefined
+%% #{record => record_info(fields, record), "record" => tuple_to_list(#i_friend{})}.
 %%======================================================================================
 record2proplist_flatten(Record, RecordFieldsMap) ->
     record2proplist_flatten(Record, RecordFieldsMap, ?DEFAULT_DEEP).
@@ -81,32 +84,38 @@ proplist2record_recover(Record, #{}) ->
     erlang:error(badarg, [Record]).
 
 proplist2record([{?RECORD_NAME, RecordName}|TPL], #{} = RecordFieldsMap) ->
-%%    @doc 速度非常慢, 速度是get_values_by_fields的1/3
-%%    F =
-%%        fun(Field, PL) ->
-%%            case lists:keytake(Field, 1, PL) of
-%%                {value, {Field, Value}, RestPL} -> {proplist2record(Value, RecordFieldsMap), RestPL};
-%%                false -> {undefined, PL}
-%%            end
-%%        end,
-%%    {VL, _} = lists:mapfoldl(F, TPL, maps:get(RecordName, RecordFieldsMap)),
-    erlang:list_to_tuple([RecordName | get_values_by_fields(TPL, maps:get(RecordName, RecordFieldsMap), RecordFieldsMap)]);
+    erlang:list_to_tuple([RecordName | get_values_by_fields(TPL, maps:get(RecordName, RecordFieldsMap), get_default_value_list(RecordName, RecordFieldsMap), RecordFieldsMap)]);
 proplist2record([[{?RECORD_NAME, _}|_]|_]=PLL, #{} = RecordFieldsMap) ->
     [proplist2record(PL, RecordFieldsMap) || PL <- PLL];
 proplist2record(Term, #{}) -> Term.
 
-get_values_by_fields([{Field, Value}|TPL], [Field | TFL], RecordFieldsMap) ->
-    [proplist2record(Value, RecordFieldsMap) | get_values_by_fields(TPL, TFL, RecordFieldsMap)];
-get_values_by_fields([{_,_}=H|_]=PL, [Field|TFL], RecordFieldsMap) ->
-    case get_values_by_fields_1(PL, Field, [H]) of
+get_default_value_list(RecordName, RecordFieldsMap) ->
+    case maps:get(atom_to_list(RecordName), RecordFieldsMap, undefined) of
+        [RecordName|TVL] -> TVL;
+        undefined -> undefined
+    end.
+
+get_values_by_fields([{Field, Value}|TPL], [Field | TFL], [_ | TVL], RecordFieldsMap) ->
+    [proplist2record(Value, RecordFieldsMap) | get_values_by_fields(TPL, TFL, TVL, RecordFieldsMap)];
+get_values_by_fields([{_,_}=H|TPL]=PL, [Field|TFL], DefaultValueList, RecordFieldsMap) ->
+    case get_values_by_fields_1(TPL, Field, [H]) of
         {RestPL, Value} ->
-            [proplist2record(Value, RecordFieldsMap)|get_values_by_fields(RestPL, TFL, RecordFieldsMap)];
+            [proplist2record(Value, RecordFieldsMap)|get_values_by_fields(RestPL, TFL, DefaultValueList, RecordFieldsMap)];
         not_found ->
-            [undefined|get_values_by_fields(PL, TFL, RecordFieldsMap)]
+            {Default, TVL} =
+            case DefaultValueList of
+                [_Default|_TVL] ->
+                    {_Default, _TVL};
+                undefined ->
+                    {undefined, undefined}
+            end,
+            [Default|get_values_by_fields(PL, TFL, TVL, RecordFieldsMap)]
     end;
-get_values_by_fields([], [_|TFL], RecordFieldsMap) ->
-    [undefined|get_values_by_fields([], TFL, RecordFieldsMap)];
-get_values_by_fields(_, [], _) -> [].
+get_values_by_fields([], [_|TFL], [Default|TVL], RecordFieldsMap) ->
+    [Default|get_values_by_fields([], TFL, TVL, RecordFieldsMap)];
+get_values_by_fields([], [_|TFL], undefined, RecordFieldsMap) ->
+    [undefined|get_values_by_fields([], TFL, undefined, RecordFieldsMap)];
+get_values_by_fields(_, [], _, _) -> [].
 
 get_values_by_fields_1([{Field, Value}|TPL], Field, HRest) ->
     {lists:reverse(HRest, TPL), Value};
